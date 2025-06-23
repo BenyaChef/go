@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -12,19 +13,25 @@ func dirTree(out io.Writer, path string, printFiles bool) error {
 	return processDir(out, path, "", printFiles)
 }
 
-func shouldSkip(name string) bool {
-	skipPrefixes := []string{
-		".DS_Store",
-		".git",
-		".gitignore",
-		".idea",
+func calculateSize(size int) string {
+	if size == 0 {
+		return "(empty)"
 	}
-	for _, prefix := range skipPrefixes {
-		if strings.HasPrefix(filepath.Base(name), prefix) {
-			return true
+	return fmt.Sprintf("(%db)", size)
+}
+
+func skipFiles(entries []os.DirEntry, printFiles bool) []os.DirEntry {
+	var filtered []os.DirEntry
+	for _, entry := range entries {
+		if !printFiles && !entry.IsDir() {
+			continue
 		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		filtered = append(filtered, entry)
 	}
-	return false
+	return filtered
 }
 
 func processDir(out io.Writer, path string, prefix string, printFiles bool) error {
@@ -32,22 +39,35 @@ func processDir(out io.Writer, path string, prefix string, printFiles bool) erro
 	defer d.Close()
 
 	entries, _ := d.ReadDir(-1)
-	for i, entry := range entries {
-		isLast := i == len(entries)-1
-		if isLast {
-			fmt.Fprintln(out, prefix+"└───"+entry.Name())
-		} else {
-			fmt.Fprintln(out, prefix+"└───"+entry.Name())
-		}
-		if !entry.IsDir() {
 
+	entries = skipFiles(entries, printFiles)
+
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
+	})
+
+	for i, entry := range entries {
+		newPrefix := ""
+		isLast := i == len(entries)-1
+
+		if isLast {
+			fmt.Fprint(out, prefix+"└───")
+			newPrefix = prefix + "\t"
 		} else {
-			var newPrefix string
-			if isLast {
-				newPrefix = prefix + "\t"
-			} else {
-				newPrefix = prefix + "│\t"
-			}
+			fmt.Fprint(out, prefix+"├───")
+			newPrefix = prefix + "│\t"
+		}
+
+		if !entry.IsDir() && printFiles {
+			info, _ := entry.Info()
+
+			size := calculateSize(int(info.Size()))
+			fmt.Fprintln(out, entry.Name(), size)
+		} else {
+			fmt.Fprintln(out, entry.Name())
+		}
+
+		if entry.IsDir() {
 			err := processDir(out, filepath.Join(path, entry.Name()), newPrefix, printFiles)
 			if err != nil {
 				return err
